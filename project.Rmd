@@ -1,0 +1,514 @@
+---
+title: "final_project_statistical_analysis"
+author: "Yunxin Gan"
+date: "2023-05-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## impact of demographic on overall COURSE
+
+```{r}
+data = read.csv('/Users/elenayun/Desktop/Project/data_medicine.csv')
+```
+
+```{r}
+data =  data %>% filter(!COURSE %in% c(8,9))
+```
+
+```{r}
+
+data_cp <- data 
+# Convert COURSE column to factor
+data_cp$COURSE <- as.factor(data_cp$COURSE)
+
+# Recode values
+data_cp$COURSE <- ifelse(data_cp$COURSE %in% c(3, 5), 1, 0)
+
+```
+
+```{r}
+df_filtered <- subset(data_cp, !apply(data_cp, 1, function(x) any(x == -4| x == 9)))
+```
+
+```{r}
+data_cp <- data_cp %>% select(-c('X','NACCOM','CVAFIB','CVCHF','CBSTROKE','CVANGINA','CBTIA',
+ 'PD','PDYR','PDOTHR','PDOTHRYR','SEIZURES','VISITMO','VISITDAY','VISITYR','NACCVNUM','NACCAVST','NACCNVST','NACCDAYS','NACCFDYS','NACCCORE','NACCREAS','NACCREFR','THYDIS','CONGHRT','ANGINA','MYOINF','HYPOSOM','REMDIS','SLEEPAP',
+ 'NACCTBI','TBI','TBIBRIEF','TBIEXTEN','TRAUMEXT','TBIWOLOS','TRAUMCHR','NCOTHR',"ALCABUSE","PCA",'BOWLINC', 'VB12DEF',
+ 'ARTHRIT','APNEA','RBD','INSOMN','OTHSLEEP','ALCOHOL','ABUSOTHR','PTSD','PSYCDIS','HEIGHT','WEIGHT','ARTH','AFIBRILL','URINEINC','FDGFTLD','HYPCHOL','CANCER','OCD','NPSYDEV','ANXIETY','BIPOLAR',))
+```
+
+```{r}
+count <-  colSums(data_cp == -4 | data_cp == 9 |data_cp == 99 , na.rm = TRUE)
+selected_columns <- (names(count[count > 0]))
+
+# Filter out data_cp based on selected_columns
+filtered_data <- subset(data_cp, !apply(data_cp %>% select(selected_columns), 1, function(x) any(x %in% c(-4, 9))))
+
+
+```
+
+```{r}
+filtered_data <- subset(filtered_data, !apply(filtered_data %>% select(NACCYOD), 1, function(x) any(x %in% c(8888,9999))))
+```
+
+```{r}
+print(filtered_data)
+```
+
+```{r}
+library(DMwR)
+
+undersampled_df <- downSample(x=data_cp[, 4:94],y=as.factor(data_cp$COURSE))
+
+upsampled_df <- upSample(x=data_cp[, 4:94],y=as.factor(data_cp$COURSE))
+```
+
+```{r}
+data_others <- data %>% filter(!COURSE == 1)
+```
+
+```{r}
+data_others$COURSE <- ifelse(data_others$COURSE %in% c(5), 1, 0)
+```
+
+LASSO regression
+
+```{r}
+library(DMwR)
+library(glmnet)
+library(mice)
+
+# Impute missing values
+imputed_data <- mice(filtered_data[, 3:ncol(filtered_data)])  # Specify the columns with missing values for imputation
+
+# Convert the imputed data back to a dataframe
+imputed_df <- complete(imputed_data, 1)  # Use the first imputed dataset
+
+```
+
+```{r}
+# Undersample and upsample the imputed data
+undersampled_df <- downSample(x = imputed_df[,1:ncol(imputed_df)-1], y = as.factor(imputed_df$COURSE))
+upsampled_df <- upSample(x = imputed_df[,1:ncol(imputed_df)-1], y = as.factor(imputed_df$COURSE))
+```
+
+```{r}
+# Split the data into predictors (X) and target (y)
+X <- upsampled_df[, 1:ncol(upsampled_df)-1]
+y <- upsampled_df$Class
+
+# Split the data into training and testing sets
+set.seed(123)  # For reproducibility
+train_indices <- sample(nrow(upsampled_df), 0.7 * nrow(upsampled_df))  # 70% for training
+X_train <- X[train_indices, ]
+y_train <- y[train_indices]
+X_test <- X[-train_indices, ]
+y_test <- y[-train_indices]
+
+# Build the Lasso regression model using cross-validation
+lasso_model <- cv.glmnet(x = as.matrix(X_train), y = y_train, family = "binomial", type.measure = "class")
+
+```
+
+```{r}
+# Get the optimal lambda value selected by cross-validation
+opt_lambda <- lasso_model$lambda.min
+
+# Fit Lasso model with the optimal lambda value
+final_model <- glmnet(x = as.matrix(X_train), y = y_train, family = "binomial", alpha = 1, lambda = opt_lambda)
+
+# Extract feature importance (non-zero coefficients)
+feature_importance <- coef(final_model, s = opt_lambda)
+```
+
+```{r}
+feature_importance_matrix <- as.matrix(feature_importance)
+feature_importance_df <- as.data.frame(feature_importance_matrix)
+```
+
+```{r}
+library(tibble)
+
+# Assuming your matrix is named "feature_importance" with column name "s1"
+df <- as.data.frame(feature_importance_df)  # Convert matrix to dataframe
+df <- rownames_to_column(df, "Feature")    # Add a new column "Index" with row names
+
+df <- df %>% rename(Importance = 's1')
+# Print the resulting dataframe
+print(df)
+
+```
+
+```{r}
+feature_importance_drug <- df[32:nrow(df),]
+feature_importance_demo <- df %>% filter(Feature %in% c('BIRTHMO','BIRTHYR','SEX','HISPANIC','RACE','PRIMLANG','EDUC','MARISTAT','INDEPEND','RESIDENC','HANDED'))
+feature_importance_medical <- df %>% filter(Feature %in% c('NACCNIHR','NACCFAM','NACCMOM','NACCDAD','NACCFADM',
+ 'NACCFFTD','NACCOM','DIABETES','NACCYOD','NACCYOD', 'INCONTU','DEP2YRS','NACCCOGF','COGMODE','BEAPATHY','HYPERTEN','HYPERCHO','DECAGE','NACCFTDM','NACCADMU'))
+```
+
+```{r}
+# Sort the data frame by importance values in descending order
+sorted_features_demo <- feature_importance_demo[order(-abs(feature_importance_demo$Importance)), ]
+# Create a bar chart
+ggplot(sorted_features_demo, aes(x = Feature, y = abs(Importance))) +
+  geom_bar(stat = "identity", fill = "blue") +
+  labs(title = "Feature Importance of demographic information",
+       x = "Feature",
+       y = "Importance") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+```
+
+```{r}
+
+
+
+# Sort the data frame by absolute importance values in descending order
+sorted_features_medical <- feature_importance_medical[order(-abs(feature_importance_medical$Importance)), ]
+
+# Create a bar chart
+ggplot(sorted_features_medical, aes(x = Feature, y = abs(Importance))) +
+  geom_bar(stat = "identity", fill = "blue") +
+  labs(
+    title = "Top 10  Feature Importance of medical history",
+    x = "Feature",
+    y = "Importance"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for better readability
+
+# Display the bar chart
+
+```
+
+```{r}
+
+
+# Sort the data frame by absolute importance values in descending order
+sorted_features_drug <- feature_importance_drug[order(-abs(feature_importance_drug$Importance)), ]
+
+# Filter out the top 20 features
+top_features_drug <- head(sorted_features_drug,20)
+
+# Create a bar chart
+ggplot(top_features_drug, aes(x = Feature, y = abs(Importance))) +
+  geom_bar(stat = "identity", fill = "blue") +
+  labs(
+    title = "Top 20 Feature Importance of drug history",
+    x = "Feature",
+    y = "Absolute Importance"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+```{r}
+
+# Predict the treatment outcome on the test set
+predictions <- predict(lasso_model, newx = as.matrix(X_test), type = "response")
+predicted_classes <- ifelse(predictions > 0.5, 1, 0)
+
+# Evaluate the model performance
+accuracy <- sum(predicted_classes == y_test) / length(y_test)
+accuracy
+```
+
+GLM model
+
+```{r}
+upsampled_df <- upsampled_df %>% rename(COURSE='Class')
+```
+
+```{r}
+glm_drug <- glm(COURSE ~ L.METHYLFOLATE+FLUOROURACIL+ISRADIPINE+AZELAIC.ACID.TOPICAL+MEMANTINE+ACETAMINOPHEN.OXYCODONE+LAMIVUDINE+SULFAMETHOXAZOLE+NUTRITIONAL.SUPPLEMENT+AMPHETAMINE.DEXTROAMPHETAMINE+CHLORAL.HYDRATE+KETOROLAC.OPHTHALMIC+NEOSTIGMINE+TICLOPIDINE+LEFLUNOMIDE+NYSTATIN+PRAMIPEXOLE+TRIFLURIDINE.OPHTHALMIC+DAPSONE+CHOLINE.BITARTRATE+FLAX.SEED+INSULIN.ISOPHANE..NPH.+BISOPROLOL+ACETAMINOPHEN.HYDROCODONE+MAGNESIUM.AMINO.ACIDS.CHELATE+MAGNESIUM.CARBONATE+ZINC.GLUCONATE+SITAGLIPTIN+MOXIFLOXACIN.OPHTHALMIC+CIMETIDINE+CHLOROTHIAZIDE+NORTRIPTYLINE+GOSERELIN+PARICALCITOL+LOVASTATIN.NIACIN+TUMERIC+CHLORPHENIRAMINE+MECLIZINE+TOLNAFTATE.TOPICAL+OXAZEPAM+RED.YEAST.RICE+SODIUM.POLYSTYRENE.SULFONATE+TERIPARATIDE+BISACODYL+PENTOSAN.POLYSULFATE.SODIUM+MELATONIN+GLIMEPIRIDE+FOSINOPRIL+IPRATROPIUM.NASAL+GARLIC+LIOTHYRONINE+PHENOBARBITAL+FLUTAMIDE+FLUCONAZOLE+KETOTIFEN.OPHTHALMIC+PIOGLITAZONE, family = binomial, data= upsampled_df)
+model_summary <- summary(glm_drug)
+model_summary
+```
+
+```{r}
+l.meth <- glm(COURSE ~ L.METHYLFOLATE, family= binomial,data=upsampled_df)
+summary(l.meth)
+
+actual_outcomes <- upsampled_df$COURSE
+
+# Make predictions using the trained model
+prediction <- predict(l.meth, type = "response")
+
+# Convert the predicted probabilities to binary outcomes using a threshold
+threshold <- 0.5
+binary_prediction <- ifelse(prediction >= threshold, 1, 0)
+
+# Calculate the prediction accuracy
+accuracy <- mean(binary_prediction == actual_outcomes)
+cat("Prediction Accuracy:", accuracy, "\n")
+
+```
+
+```{r}
+# Extract coefficients, p-values, and term names
+coefficients <- coef(model_summary)
+p_values <- model_summary$coefficients[, "Pr(>|z|)"]
+term_names <- rownames(coefficients)
+
+# Combine coefficients, p-values, and term names into a dataframe
+df <- data.frame(Term = term_names, Coefficient = coefficients[, "Estimate"], P_value = p_values)
+
+# Filter out non-significant terms (e.g., p-value threshold of 0.05)
+df <- df[df$P_value < 0.05, ]
+
+# Sort the dataframe based on the absolute value of coefficients in descending order
+df <- df[order(abs(df$Coefficient), decreasing = TRUE), ]
+
+# Print the resulting dataframe
+print(df)
+
+```
+
+```{r}
+# Extract the coefficient table
+coefficients_table <- model_summary$coefficients
+
+# Extract the term names with significant p-values
+significant_terms <- coefficients_table[coefficients_table[, "Pr(>|z|)"] < 0.05, ]
+
+# Get the term names column
+significant_term_names <- row.names(significant_terms)
+# Print the significant term names
+print(significant_term_names)
+```
+
+```{r}
+glm_drug_2 <- glm(COURSE ~ HYDROCHLOROTHIAZIDE.VALSARTAN+OXCARBAZEPINE+COLESTIPOL+ESTRADIOL+POTASSIUM.GLUCONATE+POTASSIUM.GLUCONATE+ASPIRIN.DIPYRIDAMOLE+BACLOFEN+SOTALOL+CHOLECALCIFEROL+LANSOPRAZOLE+SUMATRIPTAN+LECITHIN+SULFACETAMIDE.SODIUM.TOPICAL+ENZALUTAMIDE+MECLIZINE+POTASSIUM.BICARBONATE+TOLNAFTATE.TOPICAL+OXAZEPAM+MANGANESE.SULFATE+PNEUMOCOCCAL.23.POLYVALENT.VACCINE+CAMPHOR.MENTHOL.TOPICAL+CODEINE.GUAIFENESIN+FOSCARNET+RED.YEAST.RICE+SODIUM.POLYSTYRENE.SULFONATE+OTHER.SUPPLEMENT+ACETAMINOPHEN.DEXTROMETHORPHAN.DOXYLAMINE.PSE+TERIPARATIDE+TRASTUZUMAB+HYDROCODONE.POTASSIUM.GUAIACOLSULFONATE+GRAPE.SEED.OIL+MIRABEGRON+ETANERCEPT+MUPIROCIN.TOPICAL+CEFADROXIL+BISACODYL+CLOZAPINE+PENTOSAN.POLYSULFATE.SODIUM+DEXMETHYLPHENIDATE+PAMIDRONATE+DANAZOL+CYCLIZINE+BENZPHETAMINE+ALUMINUM.HYDROXIDE+MELATONIN+GLIMEPIRIDE+ALLERCLEAR+METHYL.SALICYLATE.TOPICAL+WHEAT.DEXTRIN+OCTREOTIDE+CODEINE.PROMETHAZINE+FOSINOPRIL+IPRATROPIUM.NASAL+ACETAMINOPHEN.SALICYLAMIDE+GARLIC+DISULFIRAM+VORTIOXETINE+HYDROCODONE.PHENYLPROPANOLAMINE+LIOTHYRONINE+DIFLORASONE.TOPICAL+AZILSARTAN+PHENOBARBITAL+PILOCARPINE.OPHTHALMIC+CLOTRIMAZOLE+PAPAYA+FLUTAMIDE
+, family = binomial, data= upsampled_df)
+model_summary_2 <- summary(glm_drug_2)
+model_summary_2
+```
+
+```{r}
+# Extract coefficients, p-values, and term names
+coefficients <- coef(model_summary_2)
+p_values <- model_summary_2$coefficients[, "Pr(>|z|)"]
+term_names <- rownames(coefficients)
+
+# Combine coefficients, p-values, and term names into a dataframe
+df_2 <- data.frame(Term = term_names, Coefficient = coefficients[, "Estimate"], P_value = p_values)
+
+# Filter out non-significant terms (e.g., p-value threshold of 0.05)
+df_2 <- df_2[df_2$P_value < 0.05, ]
+
+# Sort the dataframe based on the absolute value of coefficients in descending order
+df_2 <- df_2[order(abs(df_2$Coefficient), decreasing = TRUE), ]
+
+# Print the resulting dataframe
+print(df_2)
+
+```
+
+```{r}
+glm_drug_3 <- glm(COURSE ~ CHLORPHENIRAMINE.HYDROCODONE.PHENYLEPHRINE + AMPHOTERICIN.B.LIPOSOMAL + FLUCONAZOLE + FENTANYL + KETOTIFEN.OPHTHALMIC + DIFLUNISAL + CURCURMIN + PIOGLITAZONE + HYDROCHLOROTHIAZIDE.VALSARTAN + VARENICLINE + MICONAZOLE.TOPICAL + OXCARBAZEPINE + MULTIVITAMIN..PRENATAL + COLESTIPOL + KETOCONAZOLE.TOPICAL + ESTRADIOL + ADALIMUMAB + BACLOFEN + CLOTRIMAZOLE.TOPICAL + TENOFOVIR + LANSOPRAZOLE + TACROLIMUS + PROCAINE + LITHIUM + UNDECYLENIC.ACID.TOPICAL + POTASSIUM.GLUCONATE + VILAZODONE + RASAGILINE + SOTALOL + SUMATRIPTAN + CALCIPOTRIENE.TOPICAL + CHLOROQUINE + ASPIRIN.DIPYRIDAMOLE + METHYLSULFONYLMETHANE + DEXTROAMPHETAMINE + TOLCAPONE + DIAZOXIDE + CHOLECALCIFEROL + LECITHIN + LVP.SOLUTION + THEOPHYLLINE + DICLOFENAC + TESTOSTERONE + MONTELUKAST + METOLAZONE + HYDROCHLOROTHIAZIDE.LOSARTAN + DARIFENACIN + INSULIN.GLARGINE + METAXALONE + BRIMONIDINE.OPHTHALMIC + GABAPENTIN + TIMOLOL + SELENIUM + METFORMIN + DIPHENHYDRAMINE + NITROGLYCERIN + BUSPIRONE + TAMOXIFEN + AMIODARONE + AMILORIDE + AMOXICILLIN + PREDNISOLONE + KETOROLAC + SILDENAFIL + POLYCARBOPHIL + RISPERIDONE + HYDRALAZINE + CARVEDILOL + BALSALAZIDE + SELENIUM.SULFIDE.TOPICAL + OLMESARTAN + AMITRIPTYLINE + CHROMIUM.PICOLINATE + LORAZEPAM + PREDNISONE + NICOTINE + CYCLOSPORINE.OPHTHALMIC + SIMETHICONE + CLOPIDOGREL + ROSUVASTATIN + VALSARTAN + HYDROCHLOROTHIAZIDE.TRIAMTERENE + AMLODIPINE.BENAZEPRIL + RANITIDINE + MOMETASONE.NASAL + ETHAMBUTOL + RISEDRONATE + TRAVOPROST.OPHTHALMIC + DOCUSATE + MULTIVITAMIN + LEVETIRACETAM + FLUOXETINE + DICYCLOMINE + CLONAZEPAM + PRIMIDONE + MAGNESIUM.CHLORIDE + CYANOCOBALAMIN
+, family = binomial, data= upsampled_df)
+model_summary_3 <- summary(glm_drug_3)
+model_summary_3
+```
+
+```{r}
+# Extract coefficients, p-values, and term names
+coefficients <- coef(model_summary_3)
+p_values <- model_summary_3$coefficients[, "Pr(>|z|)"]
+term_names <- rownames(coefficients)
+
+# Combine coefficients, p-values, and term names into a dataframe
+df_3 <- data.frame(Term = term_names, Coefficient = coefficients[, "Estimate"], P_value = p_values)
+
+# Filter out non-significant terms (e.g., p-value threshold of 0.05)
+df_3 <- df_3[df_3$P_value < 0.05, ]
+
+# Sort the dataframe based on the absolute value of coefficients in descending order
+df_3 <- df_3[order(abs(df_3$Coefficient), decreasing = TRUE), ]
+
+# Print the resulting dataframe
+print(df_3)
+```
+
+```{r}
+# Merging data frames vertically
+merged_df <- rbind(df, df_2, df_3)
+
+merged_df <- merged_df[order(abs(merged_df$Coefficient), decreasing = TRUE), ]
+
+# Output the merged data frame
+print(merged_df)
+```
+
+```{r}
+merged_df <- merged_df %>% filter (!Term=='(Intercept)')
+```
+
+
+```{r}
+drugs_top <- head(results_feature,200)$Drug
+```
+
+
+
+
+
+remove features
+
+```{r}
+data_drug <- data[,96:ncol(data)]
+
+```
+
+
+
+```{r}
+data_cp_new <- data 
+# Convert COURSE column to factor
+data_cp_new$COURSE <- as.factor(data_cp_new$COURSE)
+
+data_cp_new$AGE <- data_cp_new$VISITYR - data_cp_new$BIRTHYR 
+
+# Recode values
+
+```
+
+```{r}
+data_cp_new$COURSE <- ifelse(data_cp_new$COURSE %in% c(3, 5), 1, 0)
+
+data_cp_new <- data_cp_new %>% select('DONEPEZIL',
+ 'MEMANTINE',
+ 'RIVASTIGMINE',
+ 'CHOLECALCIFEROL',
+ 'QUETIAPINE',
+ 'CALCIUM.CARBONATE',
+ 'MAGNESIUM.CHLORIDE',
+ 'GALANTAMINE',
+ 'OMEPRAZOLE',
+ 'ALBUTEROL',
+ 'CARBIDOPA.LEVODOPA',
+ 'CYANOCOBALAMIN',
+ 'PROBIOTICS',
+ 'RITONAVIR',
+ 'TENOFOVIR',
+ 'METFORMIN',
+ 'AMLODIPINE',
+ 'OMEGA.3.POLYUNSATURATED.FATTY.ACIDS',
+ 'BUPROPION',
+ 'ERGOCALCIFEROL',
+'SEX','HISPANIC','RACE','EDUC','MARISTAT','AGE',
+                                     'PRIMLANG','NACCLIVS', 'INDEPEND','RESIDENC','HANDED','NACCFAM','NACCMOM','NACCDAD','NACCFADM','NACCFFTD','DIABETES', 'INCONTU','DEP2YRS','NACCCOGF','COGMODE','BEAPATHY','HYPERTEN','HYPERCHO','DECAGE','NACCFTDM','NACCADMU','COURSE')
+```
+
+```{r}
+count <-  colSums(data_cp_new == -4 | data_cp_new == 9 | data_cp_new == 99 , na.rm = TRUE)
+selected_columns <- (names(count[count > 0]))
+
+# Filter out data_cp based on selected_columns
+filtered_data <- subset(data_cp_new, !apply(data_cp_new %>% select(selected_columns), 1, function(x) any(x %in% c(-4, 9,99))))
+```
+
+```{r}
+filtered_data <- subset(filtered_data, !apply(filtered_data %>% select(NACCYOD), 1, function(x) any(x %in% c(8888,9999))))
+```
+
+```{r}
+print(filtered_data)
+```
+
+```{r}
+undersampled_df_new<- downSample(x=filtered_data[, 1:ncol(filtered_data)-1],y=as.factor(filtered_data$COURSE))
+upsampled_df_new <- upSample(x=filtered_data[, 1:ncol(filtered_data)-1],y=as.factor(filtered_data$COURSE))
+```
+
+```{r}
+# save as csv
+write.csv(upsampled_df_new,file = '/Users/elenayun/Desktop/Project/filtered_data.csv')
+write.csv(filtered_data,file = '/Users/elenayun/Desktop/Project/cleaned_data.csv')
+```
+
+```{r}
+upsampled_df_new <- upsampled_df_new %>% rename(COURSE='Class')
+```
+
+```{r}
+upsampled_df_new
+```
+
+```{r}
+
+
+glm_demo <- glm(COURSE ~ INDEPEND + HISPANIC + HANDED + RESIDENC + 
+    RACE + SEX + MARISTAT  + PRIMLANG + EDUC +AGE,
+    family = binomial, data = upsampled_df_new)
+summary(glm_demo)
+```
+
+
+
+
+```{r}
+
+par(mfrow=c(1,5))
+
+# Split the data into training and testing sets
+set.seed(123) # Set seed for reproducibility
+train_indices <- createDataPartition(filtered_data$COURSE, p = 0.8, list = FALSE)
+train_data <- filtered_data[train_indices, ]
+test_data <- filtered_data[-train_indices, ]
+
+
+train_data_new <- upSample(x=train_data[, 1:ncol(train_data)-1],y=as.factor(train_data$COURSE))
+train_data_new <- train_data_new %>% rename(COURSE='Class')
+
+# Create a vector of drug names
+drug_names_new <- c('DONEPEZIL',
+ 'MEMANTINE',
+ 'RIVASTIGMINE',
+ 'CHOLECALCIFEROL',
+ 'QUETIAPINE',
+ 'CALCIUM.CARBONATE'
+)
+
+# Create a vector to store the prediction accuracies
+accuracy <- numeric(length(drug_names_new))
+
+roc_auc <- numeric(length(drug_names_new))
+
+# Loop through each drug and build the logistic regression model
+for (i in 1:length(drug_names_new)) {
+  # Extract the current drug name
+  drug <- drug_names_new[i]
+  
+  # Build the model with the current drug as a covariate
+  formula <- paste("COURSE ~", drug)
+  model <- glm(formula, family = binomial, data = train_data_new)
+  
+  # Make predictions using the model
+  predictions <- predict(model, newdata = test_data, type = "response")
+  predicted_classes <- ifelse(predictions > 0.5, 1, 0)
+  
+  # Calculate the prediction accuracy
+  accuracy[i] <- mean(predicted_classes == test_data$COURSE)
+  
+    # Calculate the ROC curve and ROC-AUC
+  roc_curve <- roc(test_data$COURSE, predictions)
+  roc_auc[i] <- auc(roc_curve)
+  
+  
+   par(family = "Times New Roman")
+    # Plot the ROC curve
+    plot(roc_curve, main = paste("ROC Curve for", drug,"AUC =", round(roc_auc[i], 2)), col = "blue", lwd = 2,  cex.main = 1.3,title.adj = 0.5,cex.lab = 1.3, cex.axis = 1.3)
+    lines(x = c(0, 1), y = c(0, 1), col = "gray", lty = 2)
+    par(cex.axis = 1.5)
+
+}
+
+
+```
+
+
+
+
